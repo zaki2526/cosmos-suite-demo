@@ -1120,6 +1120,35 @@ body{font-family:'DM Sans',sans-serif;color:var(--text);display:flex;flex-direct
         ></div>
         <button class="send-btn" id="sendBtn" onclick="sendMessage()" aria-label="Send message" title="Send">➤</button>
       </div>
+
+      <!-- FILE UPLOAD ROW -->
+      <div class="input-row" style="margin-top:8px;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="empFileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleEmployeeFile(this)">
+        <button id="uploadBtn" onclick="checkBeforeUpload()" style="display:flex;align-items:center;gap:6px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);color:var(--gold);padding:7px 14px;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:all 0.2s" onmouseover="this.style.background='rgba(201,168,76,0.2)'" onmouseout="this.style.background='rgba(201,168,76,0.1)'">
+          📂 Upload Employee File
+        </button>
+        <button id="clearDataBtn" onclick="clearUploadedData()" style="display:none;align-items:center;gap:6px;background:rgba(244,67,54,0.1);border:1px solid rgba(244,67,54,0.3);color:var(--ruby);padding:7px 14px;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:all 0.2s" onmouseover="this.style.background='rgba(244,67,54,0.2)'" onmouseout="this.style.background='rgba(244,67,54,0.1)'">
+          ✕ Clear — Back to Demo
+        </button>
+        <span style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace">Excel / CSV · Instant AI analysis</span>
+        <div id="upload-status" style="font-size:10px;color:var(--emerald);font-family:'JetBrains Mono',monospace;display:none"></div>
+      </div>
+
+      <!-- WARNING MODAL -->
+      <div id="upload-warning" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:999;display:none;align-items:center;justify-content:center">
+        <div style="background:var(--card);border:1px solid rgba(201,168,76,0.3);border-radius:16px;padding:32px;max-width:420px;width:90%;text-align:center">
+          <div style="font-size:32px;margin-bottom:16px">⚠️</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--gold);font-weight:700;margin-bottom:8px">DATA ALREADY LOADED</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:8px">You already have data loaded for:</div>
+          <div style="font-size:15px;color:var(--text);font-weight:600;margin-bottom:20px" id="warning-company-name">—</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:24px">Do you want to replace it with the new file?</div>
+          <div style="display:flex;gap:12px;justify-content:center">
+            <button onclick="confirmUpload()" style="background:linear-gradient(135deg,var(--gold),var(--gold-light));color:var(--void);border:none;padding:10px 24px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">YES — Load New File</button>
+            <button onclick="cancelUpload()" style="background:var(--faint);color:var(--text);border:1px solid var(--border);padding:10px 24px;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer">NO — Keep Current</button>
+          </div>
+        </div>
+      </div>
+
       <div class="voice-status" id="voiceStatus" style="display:none">
         <span class="voice-pulse"></span>
         <span id="voiceStatusText">🎤 Listening… speak now, then <strong>press 🔴 again</strong> or <strong>wait</strong> to auto-send</span>
@@ -1131,15 +1160,207 @@ body{font-family:'DM Sans',sans-serif;color:var(--text);display:flex;flex-direct
         </label>
         <button class="stop-btn" id="stopBtn" onclick="stopSpeaking()" style="display:none">⏹ Stop</button>
       </div>
-      <div class="input-hint" id="inputHint">① Press 🎤 → ② Speak clearly → ③ Wait or press 🔴 to send</div>
+      <div class="input-hint" id="inputHint">① Press 🎤 → ② Speak clearly → ③ Wait or press 🔴 to send · Or upload your employee Excel file above</div>
     </div>
 
   </div><!-- /chat-panel -->
 
 </div><!-- /main -->
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 const API_KEY = ""; // Handled by Cloudflare Worker
+
+// Uploaded company data storage
+let uploadedCompanyData = null;
+
+// Check before upload — show warning if data already loaded
+function checkBeforeUpload() {
+  if (uploadedCompanyData) {
+    // Show warning modal
+    document.getElementById('warning-company-name').textContent = uploadedCompanyData.company;
+    const modal = document.getElementById('upload-warning');
+    modal.style.display = 'flex';
+  } else {
+    // No data loaded — proceed directly
+    document.getElementById('empFileInput').click();
+  }
+}
+
+function confirmUpload() {
+  // Close modal and trigger file picker
+  document.getElementById('upload-warning').style.display = 'none';
+  document.getElementById('empFileInput').click();
+}
+
+function cancelUpload() {
+  // Close modal — keep current data
+  document.getElementById('upload-warning').style.display = 'none';
+}
+
+function clearUploadedData() {
+  uploadedCompanyData = null;
+  // Hide clear button
+  document.getElementById('clearDataBtn').style.display = 'none';
+  // Reset status
+  const status = document.getElementById('upload-status');
+  status.style.display = 'none';
+  status.textContent = '';
+  // Show message in chat
+  addMessage('assistant', '✅ Company data cleared. Now showing **Gulf Star Trading LLC** demo data.\n\nUpload a new employee file anytime to load your own company data.');
+}
+
+// Handle employee file upload
+async function handleEmployeeFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const status = document.getElementById('upload-status');
+  status.style.display = 'inline';
+  status.textContent = '⏳ Reading file...';
+  status.style.color = 'var(--gold)';
+
+  try {
+    const data = await readFileAsArrayBuffer(file);
+    let employees = [];
+    let companyName = file.name.replace(/\.[^/.]+$/, '').replace(/_/g,' ').replace(/-/g,' ');
+
+    if (file.name.endsWith('.csv')) {
+      // Parse CSV
+      const text = new TextDecoder().decode(data);
+      employees = parseCSV(text);
+    } else {
+      // Parse Excel
+      const workbook = XLSX.read(data, {type: 'array', cellDates: true});
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {defval: ''});
+      employees = parseExcelRows(rows);
+    }
+
+    if (employees.length === 0) {
+      status.textContent = '❌ No employee data found — check file format';
+      status.style.color = 'var(--ruby)';
+      return;
+    }
+
+    // Store uploaded data
+    uploadedCompanyData = {
+      company: companyName,
+      employees: employees,
+      uploadTime: new Date().toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'})
+    };
+
+    status.textContent = `✅ ${employees.length} employees loaded from ${file.name}`;
+    status.style.color = 'var(--emerald)';
+    status.style.display = 'inline';
+
+    // Show clear button
+    const clearBtn = document.getElementById('clearDataBtn');
+    if (clearBtn) clearBtn.style.display = 'flex';
+
+    // Show success message in chat
+    addUploadSuccessMessage(employees, companyName);
+
+  } catch (err) {
+    status.textContent = '❌ Error reading file: ' + err.message;
+    status.style.color = 'var(--ruby)';
+    console.error(err);
+  }
+
+  // Reset input
+  input.value = '';
+}
+
+function readFileAsArrayBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(new Uint8Array(e.target.result));
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function parseExcelRows(rows) {
+  if (!rows || rows.length === 0) return [];
+  return rows.map((row, i) => {
+    // Try to find columns by common names
+    const keys = Object.keys(row).map(k => k.toLowerCase().trim());
+    const get = (...names) => {
+      for (const n of names) {
+        const k = Object.keys(row).find(k => k.toLowerCase().includes(n));
+        if (k && row[k] !== '') return String(row[k]).trim();
+      }
+      return '';
+    };
+
+    const name = get('name', 'employee name', 'full name', 'staff name');
+    const code = get('code', 'emp code', 'id', 'employee id', 'staff id') || `EMP${String(i+1).padStart(3,'0')}`;
+    const category = get('category', 'type', 'staff/worker') || 'Staff';
+    const dept = get('department', 'dept', 'division') || 'General';
+    const nat = get('nationality', 'nation', 'country') || 'Unspecified';
+    const doj = get('joining', 'doj', 'start date', 'date of joining', 'join date');
+    const basic = parseFloat(get('basic', 'basic salary', 'base salary').replace(/[^0-9.]/g,'')) || 0;
+    const gross = parseFloat(get('gross', 'gross salary', 'total salary').replace(/[^0-9.]/g,'')) || basic;
+    const passport = get('passport', 'passport exp');
+    const visa = get('visa', 'visa exp', 'visa expiry');
+    const labor = get('labour', 'labor', 'labour card', 'labor card');
+
+    if (!name) return null;
+    return { code, name, category, dept, nat, doj, basic, gross, passport, visa, labor };
+  }).filter(Boolean);
+}
+
+function parseCSV(text) {
+  const lines = text.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  return lines.slice(1).map((line, i) => {
+    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g,''));
+    const row = {};
+    headers.forEach((h,j) => row[h] = vals[j] || '');
+    const name = row['name'] || row['full name'] || row['employee name'] || '';
+    if (!name) return null;
+    return {
+      code: row['code'] || row['employee code'] || `EMP${String(i+1).padStart(3,'0')}`,
+      name,
+      category: row['category'] || row['type'] || 'Staff',
+      dept: row['department'] || row['dept'] || 'General',
+      nat: row['nationality'] || 'Unspecified',
+      doj: row['date of joining'] || row['doj'] || row['joining date'] || '',
+      basic: parseFloat((row['basic salary'] || row['basic'] || '0').replace(/[^0-9.]/g,'')) || 0,
+      gross: parseFloat((row['gross salary'] || row['gross'] || '0').replace(/[^0-9.]/g,'')) || 0,
+      passport: row['passport expiry'] || row['passport'] || '',
+      visa: row['visa expiry'] || row['visa'] || '',
+      labor: row['labour card'] || row['labor card'] || ''
+    };
+  }).filter(Boolean);
+}
+
+function addUploadSuccessMessage(employees, companyName) {
+  const totalGross = employees.reduce((s,e) => s+e.gross, 0);
+  const staffCount = employees.filter(e => e.category.toLowerCase().includes('staff')).length;
+  const workerCount = employees.length - staffCount;
+
+  const summary = `✅ **Employee file loaded successfully!**
+
+**Company:** ${companyName}
+**Total Employees:** ${employees.length} (${staffCount} Staff · ${workerCount} Workers)
+**Total Gross Payroll:** AED ${Math.round(totalGross).toLocaleString()}/month
+
+Your company data is now loaded into COSMOS SUITE. You can now ask:
+- *"Show me EOSB for all employees"*
+- *"Who has the highest gratuity?"*
+- *"Which documents are expiring?"*
+- *"Generate full payroll report"*
+- *"What is the final settlement for [employee name]?"*
+
+🔒 Your data is private — not stored anywhere — session only.`;
+
+  addMessage('assistant', summary);
+}
+
+// Override getLiveSystem to include uploaded data
+const _originalGetLiveSystem = typeof getLiveSystem === 'function' ? getLiveSystem : null;
 
 function getLiveSystem() {
   // Always inject today's real date — never fixed
@@ -1164,6 +1385,50 @@ function getLiveSystem() {
     return yrs.toFixed(2);
   }
 
+  // If company data was uploaded — use their data instead of demo data
+  if (uploadedCompanyData && uploadedCompanyData.employees.length > 0) {
+    const co = uploadedCompanyData;
+    const empList = co.employees.map((e,i) => {
+      const g = e.doj ? calcLiveGratuity(e.basic, e.doj) : 0;
+      const svc = e.doj ? calcLiveService(e.doj) : 'N/A';
+      return `${e.code}|${e.name}|${e.category}|${e.dept}|${e.nat}|${e.doj||'N/A'}|${svc}yrs|Basic:${e.basic}|Gross:${e.gross}|Gratuity:${g}|Passport:${e.passport||'N/A'}|Visa:${e.visa||'N/A'}|Labor:${e.labor||'N/A'}`;
+    }).join('\n');
+
+    const totalGross = co.employees.reduce((s,e) => s+e.gross, 0);
+    const totalGrat = co.employees.reduce((s,e) => s+(e.doj?calcLiveGratuity(e.basic,e.doj):0), 0);
+
+    return `You are COSMOS SUITE, the AI HR intelligence agent for ${co.company}, UAE.
+You serve the CEO and HR team with 100% accurate answers from their uploaded company data.
+
+TODAY'S DATE: ${todayStr}
+CURRENT MONTH: ${monthYear}
+ALL FFS DOCUMENTS MUST USE: ${todayStr}
+
+COMPANY: ${co.company}
+TOTAL EMPLOYEES: ${co.employees.length}
+TOTAL GROSS PAYROLL: AED ${Math.round(totalGross).toLocaleString()}/month
+TOTAL GRATUITY LIABILITY: AED ${Math.round(totalGrat).toLocaleString()}
+DATA SOURCE: Uploaded by CEO on ${co.uploadTime}
+
+ABSOLUTE RULES:
+1. ONLY use names and figures from the uploaded database below.
+2. Calculate all EOSB and gratuity LIVE from Date of Joining using UAE law.
+3. Always produce MARKDOWN TABLES for any list or report.
+4. AED figures first. UAE Law article second. Action last.
+5. ALL FFS documents must show Date: ${todayStr}
+
+═══ UPLOADED EMPLOYEE DATABASE — ${co.employees.length} employees ═══
+${empList}
+═══ END OF DATABASE ═══
+
+UAE LAW — Federal Decree-Law No. 33 of 2021:
+- Article 51: Gratuity = 21 days basic per year (first 5 years) + 30 days per year after 5 years
+- Article 29: Annual leave = 30 days after 1 year service
+- Article 43: Notice period = 30 days (under 5 years) / 90 days (over 5 years)
+- WPS: Minimum 80% of workforce paid within 10 days of due date`;
+  }
+
+  // Default — use demo data for Gulf Star Trading LLC
   return `You are COSMOS SUITE, the AI HR intelligence agent for Gulf Star Trading LLC, UAE.
 You serve the CEO and HR team with 100% accurate answers from verified company data.
 
